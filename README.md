@@ -10,7 +10,7 @@ https://ttsmp3.com/
 Use test_write for writing and testing the RFID-Cards
 
 # Layout
-- To reduce noice, add a 100uF capacity parallely to the speaker
+- To reduce noise, add a 100uF capacity parallely to the speaker
 ![image](https://user-images.githubusercontent.com/8984410/124837231-bc22b380-df84-11eb-9362-05a5ca6fccdb.png)
 
 # Pins DFPlayer
