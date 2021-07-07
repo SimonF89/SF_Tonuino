@@ -10,6 +10,7 @@ https://ttsmp3.com/
 Use test_write for writing and testing the RFID-Cards
 
 # Layout
+- To reduce noice, add a 100uF capacity parallely to the speaker
 ![image](https://user-images.githubusercontent.com/8984410/124837231-bc22b380-df84-11eb-9362-05a5ca6fccdb.png)
 
 # Pins DFPlayer
@@ -17,3 +18,6 @@ Use test_write for writing and testing the RFID-Cards
 
 # Pins ESP32
 ![image](https://user-images.githubusercontent.com/8984410/124837275-d197dd80-df84-11eb-8cff-1737979d7c81.png)
+
+# Detecting low Battery
+https://www.pangodream.es/esp32-getting-battery-charging-level
