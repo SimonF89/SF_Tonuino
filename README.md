@@ -2,6 +2,8 @@ Based on https://github.com/CKUL/TonUINO-ESP32
 
 Without wifi, just basic functionality.
 
+Use test_write for writing and testing the RFID-Cards
+
 # Layout
 ![image](https://user-images.githubusercontent.com/8984410/124837231-bc22b380-df84-11eb-9362-05a5ca6fccdb.png)
 
