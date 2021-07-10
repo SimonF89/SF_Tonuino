@@ -24,11 +24,11 @@ https://www.pangodream.es/esp32-getting-battery-charging-level
 
 
 # offene Todos
-- [ ] prüfen ob aktuelle Karte == letzte Karte
-  - [ ] wenn ja und playing - lasse laufen und mache nichts
-  - [ ] wenn ja und nicht playing - mache weiter bei letzen nächsten Song
-- [ ] numInFolder häufig -1 --> mehrfach ordner auslesen
-- [ ] read and save last Song on EEPROM
+- [x] prüfen ob aktuelle Karte == letzte Karte
+  - [x] wenn ja und playing - lasse laufen und mache nichts
+  - [x] wenn ja und nicht playing - mache weiter bei letzen nächsten Song
+- [ ] numInFolder häufig -1 --> mehrfach ordner auslesen --> Leider nicht möglich, Funktion geht nicht.
+- [x] read and save last Song on EEPROM --> noch nicht ausreichend getestet
 - [ ] save last jokes in string and check if already played. 
 '''
 String playedJokes = "";
