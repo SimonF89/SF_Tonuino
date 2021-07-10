@@ -6,8 +6,8 @@
 #include <MFRC522.h>
 #include <EEPROM.h>
 #include <JC_Button.h>
-#include <math.h>
-#include <Preferences.h>
+//#include <math.h>
+//#include <Preferences.h>
 
 // RC522 Module
 //========================================================================
@@ -36,9 +36,10 @@ byte blockAddr = 4;
 byte trailerBlock = 7;
 MFRC522::StatusCode status;
 
-uint16_t numTracksInFolder;
+int numTracksInFolder;
 uint16_t track = 1;
-uint8_t lastFolder = 0;
+byte lastFolder = 0;
+int lastTrack = 0;
 
 // Variablen und Definitionen
 //========================================================================
@@ -49,52 +50,78 @@ uint8_t lastFolder = 0;
 #define busyPin 4
 
 #define LONG_PRESS 1000
+#define MINIMUM_TRACK_LENGTH 300    // milliseconds
+
+#define EEPROM_SIZE 10
+
+#define LAST_FOLDER_ADRESS 0x01
+#define LAST_TRACK_ADRESS 0x02
+#define LAST_VOL_ADRESS 0x03
+
+// boolsche Speicher
+bool debug = true;
+bool figurePresent = false;
+bool doPlaceFigure = false;
+bool isStandby = false;
+bool cardalreadyRead = false;
+bool skipNextTrack = true;
+bool currentCardIsEmpty = false;
+
+int jokeCount = 16;
+int tooShortSongCount = 0;
+int maxTooShortSongs = 5;
 
 // EEPROM Speicher *NVS*
-Preferences preferences;
-int timeout = 20;
-int randomJokesTime = 5; // Seconds till Musik-Box tells a random joke
+int timeout = 30;
+int randomJokesTime = 15; // Seconds till Musik-Box tells a random joke
 long randomJokeNumber = 0;
-unsigned long lastJoke; // time the last joke was told
-unsigned long lastPlay; // time the last song was played
-bool placeFigure = false;
-bool debug = true;
+unsigned long lastJoke;  // time the last joke was told
+unsigned long lastPlay;  // time the last song was played
 unsigned long lastDebug; // time the last debugMsg was printed
+byte lastVolume;
 int debugTimeout = 1;    // Seconds till next debug msg will be printed
 
-unsigned long last_color = 0xFFFFFF;
-unsigned int last_Volume;
-unsigned int last_max_Volume;
-unsigned int max_Volume = 5;
-signed int akt_Volume = 2;
+byte min_Volume = 1;
+byte max_Volume = 15;
+byte akt_Volume = 7;
+
+int control = 0;
 
 // Buttons
 Button pauseButton(buttonPause);
 Button upButton(buttonUp, 100);
 Button downButton(buttonDown, 100);
 
-uint8_t numberOfCards = 0;
-
+// detects if mp3-player is playing
 bool isPlaying() { return !digitalRead(busyPin); }
 
 HardwareSerial mySoftwareSerial(2);
 DFRobotDFPlayerMini myDFPlayer;
-void printDetail(uint8_t type, int value);
+//void printDetail(uint8_t type, int value);
 
 // Function decleration
 //========================================================================
 
 bool readCard(nfcTagObject *nfcTag);
-void setupCard(void);
-static void nextTrack(bool);
-static void handleVolume(bool);
-static void handleCard();
-static void handleJokes();
-static void standbyMode();
-int voiceMenu(int numberOfOptions, int startMessage, int messageOffset,
-              bool preview = false, int previewFromFolder = 0);
 
-static void handlePause()
+void debuging(String msg)
+{
+    if (debug)
+    {
+        Serial.println("Debug: " + msg);
+    }
+}
+
+void debugingContinuous(String msg)
+{
+    if (debug && lastDebug + debugTimeout * 1000 <= millis())
+    {
+        lastDebug = millis();
+        debuging(msg);
+    }
+}
+
+void handlePause()
 {
     if (isPlaying())
     {
@@ -110,84 +137,250 @@ static void handlePause()
     delay(2000);
 }
 
-static void nextTrack(bool forward)
+void nextTrack(bool forward)
 {
     if (forward)
     {
-        Serial.println(F("Debug1"));
         if (track != numTracksInFolder)
         {
-            Serial.println(F("Debug2"));
             track = track + 1;
-            Serial.println(F("Spiele Track" + track));
-            myDFPlayer.playFolder(myCard.folder, track);
+            debuging("Playing Track" + String(track) + ", from Folter: " + String(myCard.folder));
+            if(myCard.folder)
+            {
+                myDFPlayer.playFolder(myCard.folder, track);
+            }
+            else 
+            {
+                myDFPlayer.playMp3Folder(track);
+            }
             lastPlay = millis();
             // Fortschritt im EEPROM abspeichern
-            EEPROM.write(myCard.folder, track);
+            EEPROM.write(LAST_TRACK_ADRESS, track);
         }
         else
         {
-            Serial.println(F("Debug3"));
-            Serial.println(F("Kein Song mehr übrig. Player in Standby versetzen."));
-            myDFPlayer.sleep();
+            debuging("Kein Song mehr übrig. Player in Standby versetzen.");
+            myDFPlayer.pause();
             // Fortschritt zurück setzen
-            EEPROM.write(myCard.folder, 1);
+            EEPROM.write(LAST_TRACK_ADRESS, 1);
         }
     }
     else
     {
-        Serial.println(F("Debug1_a"));
         if (track > 1)
         {
             track = track - 1;
         }
-        Serial.println(F("Debug2_a"));
-        Serial.println("Spiele Track " + String(track));
-        Serial.println(F("Debug3_a"));
+        debuging("Playing Track" + String(track));
         myDFPlayer.playFolder(myCard.folder, track);
         lastPlay = millis();
         // Fortschritt im EEPROM abspeichern
-        Serial.println(F("Debug4_a"));
-        EEPROM.write(myCard.folder, track);
+        EEPROM.write(LAST_TRACK_ADRESS, track);
     }
-    delay(2000);
 }
 
-static void handleVolume(bool louder)
+void handleVolume(bool louder)
 {
     if (louder)
     {
+        debuging("louder");
         akt_Volume = akt_Volume + 1;
+        if (akt_Volume > max_Volume)
+        {
+            akt_Volume = max_Volume;
+        }
     }
     else
     {
+        debuging("quieter");
         akt_Volume = akt_Volume - 1;
+        if (akt_Volume < min_Volume)
+        {
+            akt_Volume = min_Volume;
+        }
     }
-    if (akt_Volume > max_Volume)
-    {
-        akt_Volume = max_Volume;
-    }
-    else if (akt_Volume < 0)
-    {
-        akt_Volume = 0;
-    }
+    Serial.println("Set and save new volume: " + String(akt_Volume));
     myDFPlayer.volume(akt_Volume);
-    Serial.println("Aktuelles Volumen" + String(akt_Volume));
+    EEPROM.write(LAST_VOL_ADRESS,akt_Volume);
     delay(500);
 }
 
-static void handleJokes()
+void handleJokes()
 {
-    numTracksInFolder = myDFPlayer.readFileCountsInFolder(88);
-    randomJokeNumber = random(1, numTracksInFolder + 1);
+    debuging("Start Random Joke");
+    randomJokeNumber = random(jokeCount);
+    debuging("test");
+    debuging("Playing Song: " + String(randomJokeNumber));
+    skipNextTrack = true;
     myDFPlayer.playFolder(88, randomJokeNumber);
+    delay(1000);
+    while (isPlaying())
+        ;
+    lastJoke = millis();
 }
 
-static void handleStandby()
+void handleStandby()
 {
+    isStandby = true;
     Serial.println(F("Starte Standby"));
+    playSystem3Message(7);
+    delay(500);
+    //myDFPlayer.sleep();
     myDFPlayer.pause();
-    myDFPlayer.sleep();
+    delay(500);
+}
+
+void handleButton()
+{
+    debugingContinuous("Handling Buttons");
+
+    if (!isPlaying())
+    {
+        if (myDFPlayer.available())
+        {
+            printDetail(myDFPlayer.readType(), myDFPlayer.read()); //Print the detail message from DFPlayer to handle different errors and states.
+        }
+    }
+
+    // Buttons auslesen
+    pauseButton.read();
+    upButton.read();
+    downButton.read();
+
+    // ====== State-Machine ======
+    if (pauseButton.pressedFor(LONG_PRESS))
+    {
+        debuging("State-Machine: Standby");
+        handleStandby();
+    }
+    else if (pauseButton.wasReleased())
+    {
+        debuging("State-Machine: Pausemodus");
+        handlePause();
+    }
+    else if (upButton.pressedFor(LONG_PRESS))
+    {
+        debuging("State-Machine: Nächster Song");
+        nextTrack(true);
+    }
+    else if (upButton.wasReleased())
+    {
+        debuging("State-Machine: Lauter");
+        handleVolume(true);
+    }
+    else if (downButton.pressedFor(LONG_PRESS))
+    {
+        debuging("State-Machine: Vorheriger Song");
+        nextTrack(false);
+    }
+    else if (downButton.wasReleased())
+    {
+        debuging("State-Machine: Leiser");
+        handleVolume(false);
+    }
+}
+
+bool isCardPresent()
+{
+    bool present = false;
+    mfrc522.PCD_Init();
+    delay(100);
+
+    if (!mfrc522.PICC_IsNewCardPresent())
+    {
+        debugingContinuous("Card not present");
+        return false;
+    }
+    if (!mfrc522.PICC_ReadCardSerial())
+    {
+        debugingContinuous("Card not present");
+        return false;
+    }
+        
+    debugingContinuous("Card present");
+    return true;
+}
+
+void handleNoCard()
+{
+    if(isPlaying())
+    {
+        myDFPlayer.pause();
+    }
+
+    // Handle timeout - standby
+    if (lastPlay + 1000 * timeout <= millis() && !isStandby)
+    {
+        if (!doPlaceFigure)
+        {
+            doPlaceFigure = true;
+            debuging("Please place a figure on the Box");
+            playSystem3Message(2);
+        }
+        else
+        {
+            doPlaceFigure = false;
+            handleStandby();
+        }
+        lastPlay = millis();
+    }
+    // if no Card is present, tell random jokes
+    if (lastJoke + 1000 * randomJokesTime <= millis() && !isStandby)
+    {
+        handleJokes();
+    }
+}
+
+void handlePlayerEvents()
+{
+    if (myDFPlayer.available())
+    {
+        printDetail(myDFPlayer.readType(), myDFPlayer.read()); //Print the detail message from DFPlayer to handle different errors and states.
+    }
+}
+
+int getCurrentFileNumber()
+{
+    int i = 0;
+    int tmp = -1;
+    while(i < 3 && tmp == -1)
+    {
+        i++;
+        tmp = myDFPlayer.readCurrentFileNumber();
+    }
+    if(tmp != -1)
+    {
+        debuging("CurrentFileNumber: " + String(lastTrack));
+        return tmp;
+    }
+    else
+    {
+        debuging("CurrentFileNumber not found");
+        return lastTrack;
+    }
+}
+
+void playSystem3Message(int trackNr)
+{
+    skipNextTrack = true;
+    myDFPlayer.playMp3Folder(trackNr);
+    delay(1000);
+    lastTrack = getCurrentFileNumber();
+    while (isPlaying())
+        ;
+    handlePlayerEvents();
+    
+}
+
+void playUnKnowCardMessage()
+{
+    playSystem3Message(4);
+    skipNextTrack = true;
+    myDFPlayer.playFolder(99, myCard.folder);
+    delay(1000);
+    while (isPlaying())
+        ;
+    playSystem3Message(5);
 }
 
 // Setup
@@ -200,7 +393,9 @@ void setup()
     mySoftwareSerial.begin(9600, SERIAL_8N1, 16, 17); // speed, type, RX, TX
     delay(3000);
 
-    randomSeed(analogRead(33)); // Zufallsgenerator initialisieren
+    // Define EEPROM
+    EEPROM.begin(EEPROM_SIZE);
+
     mfrc522.PCD_Init();
     mfrc522.PCD_DumpVersionToSerial();
 
@@ -229,7 +424,9 @@ void setup()
 
     Serial.println(F("Initializing DFPlayer ... (May take 3~5 seconds)"));
     myDFPlayer.begin(mySoftwareSerial, false, true);
-
+    //Set serial communictaion time out 500ms
+    myDFPlayer.setTimeOut(500);
+    // Check if DFPlayer is available
     if (myDFPlayer.available())
     {
         Serial.println("Verbindung zu MP3 Player konnte hergestellt werden.");
@@ -238,59 +435,38 @@ void setup()
     {
         Serial.println("!!! Verbindung zu MP3 Player konnte NICHT hergestellt werden. !!!");
     }
-
-    myDFPlayer.setTimeOut(500); //Set serial communictaion time out 500ms
+    
     delay(100);
     //----Set volume----
+    lastVolume = EEPROM.read(LAST_VOL_ADRESS);
+    if(lastVolume != 255)
+    {
+        Serial.println("Last Volume was: " + String(lastVolume));
+    }
     myDFPlayer.volume(akt_Volume); //Set volume value (0~30).
-    //myDFPlayer.volumeUp(); //Volume Up
-    //myDFPlayer.volumeDown(); //Volume Down
     delay(100);
     //----Set different EQ----
-    //myDFPlayer.EQ(DFPLAYER_EQ_NORMAL);
-    //  myDFPlayer.EQ(DFPLAYER_EQ_POP);
-    //  myDFPlayer.EQ(DFPLAYER_EQ_ROCK);
-    //  myDFPlayer.EQ(DFPLAYER_EQ_JAZZ);
-    //  myDFPlayer.EQ(DFPLAYER_EQ_CLASSIC);
     myDFPlayer.EQ(DFPLAYER_EQ_BASS);
     delay(100);
     //----Set device we use SD as default----
-    //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_U_DISK);
     myDFPlayer.outputDevice(DFPLAYER_DEVICE_SD);
-    //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_AUX);
-    //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_SLEEP);
-    //  myDFPlayer.outputDevice(DFPLAYER_DEVICE_FLASH);
-
-    //----Mp3 control----
-    //  myDFPlayer.sleep();     //sleep
-    //  myDFPlayer.reset();     //Reset the module
-    //  myDFPlayer.enableDAC();  //Enable On-chip DAC
-    //  myDFPlayer.disableDAC();  //Disable On-chip DAC
-    //  myDFPlayer.outputSetting(true, 15); //output setting, enable the output and set the gain to 15
-
+    delay(100);
     //----Read imformation----
     Serial.println("");
     Serial.println(F("readState--------------------"));
     Serial.println(myDFPlayer.readState()); //read mp3 state
     Serial.println(F("readVolume--------------------"));
     Serial.println(myDFPlayer.readVolume()); //read current volume
-    //Serial.println(F("readEQ--------------------"));
-    //Serial.println(myDFPlayer.readEQ()); //read EQ setting
     Serial.println(F("readFileCounts--------------------"));
     Serial.println(myDFPlayer.readFileCounts()); //read all file counts in SD card
     Serial.println(F("readCurrentFileNumber--------------------"));
     Serial.println(myDFPlayer.readCurrentFileNumber()); //read current play file number
-    Serial.println(F("readFileCountsInFolder--------------------"));
-    Serial.println(myDFPlayer.readFileCountsInFolder(3)); //read fill counts in folder SD:/03
-    Serial.println(F("--------------------"));
-    //Begrüßung abspielen, das überbrückt auch die Zeit des WLAN Connect
-    //myDFPlayer.playMp3Folder(1);
-    myDFPlayer.playFolder(1, 1);
-    delay(500);
-    while (isPlaying())
-        ;
-    delay(2000);
 
+    //Begrüßung abspielen, das überbrückt auch die Zeit des WLAN Connect
+    playSystem3Message(1);
+    Serial.println(lastTrack);
+    playSystem3Message(2);
+    Serial.println(lastTrack);
     // starting time last song and joke were played
     lastPlay = millis();
     lastJoke = millis();
@@ -300,110 +476,46 @@ void setup()
     Serial.println("===============/ //////////// ================");
 }
 
-void debuging(String msg)
-{
-    if (debug && lastDebug + debugTimeout * 1000 <= millis())
-    {
-        lastDebug = millis();
-        Serial.println("Debug: " + msg);
-    }
-}
-
 // Main-Loop
 //========================================================================
 void loop()
 {
-    debuging("Main loop");
+    debugingContinuous("Main loop");
 
-    // Button Handling
-    do
+    // State-Machine
+    handleButton();
+
+    if(isCardPresent())
     {
-        placeFigure = false;
-
-        debuging("Do loop");
-
-        // Detailed error handling
-        if (myDFPlayer.available() && !isPlaying())
+        if(!cardalreadyRead)
         {
-            printDetail(myDFPlayer.readType(), myDFPlayer.read()); //Print the detail message from DFPlayer to handle different errors and states.
+            if (readCard(&myCard) == true)
+            {
+                handleCard();
+                mfrc522.PICC_HaltA();
+                mfrc522.PCD_StopCrypto1();
+                cardalreadyRead = true;
+            }
+            else
+            {
+                debuging("Reading card wasnt successful");
+            }
         }
-
-        // Buttons auslesen
-        pauseButton.read();
-        upButton.read();
-        downButton.read();
-
-        // ====== State-Machine ======
-        if (pauseButton.pressedFor(LONG_PRESS))
-        {
-            Serial.println(F("Starte Standby"));
-            myDFPlayer.pause();
-            myDFPlayer.sleep();
-            delay(2000);
-        }
-        else if (pauseButton.wasReleased())
-        {
-            Serial.println(F("Pausemodus"));
-            handlePause();
-        }
-        else if (upButton.pressedFor(LONG_PRESS))
-        {
-            Serial.println(F("nächster Song"));
-            nextTrack(true);
-        }
-        else if (upButton.wasReleased())
-        {
-            Serial.println(F("Lauter"));
-            handleVolume(true);
-        }
-        else if (downButton.pressedFor(LONG_PRESS))
-        {
-            Serial.println(F("vorheriger Song"));
-            nextTrack(false);
-        }
-        else if (downButton.wasReleased())
-        {
-            Serial.println(F("Leiser"));
-            handleVolume(false);
-        }
-
-    } while (!mfrc522.PICC_IsNewCardPresent());
-
-    // RFID Karte wurde aufgelegt
-    if (!mfrc522.PICC_ReadCardSerial())
-        return;
-
-    if (readCard(&myCard) == true)
-    {
-        Serial.println(F("Handling Card"));
-        handleCard();
     }
+    else
+    {
+        if(cardalreadyRead)
+        {
+            debugingContinuous("Card removed");
+            cardalreadyRead = false;
+            lastPlay = millis();
+            lastJoke = millis();
+        }
+        handleNoCard();
+    }
+
     mfrc522.PICC_HaltA();
     mfrc522.PCD_StopCrypto1();
-
-    // Handle timeout - standby
-    if (lastPlay + 1000 * timeout <= millis())
-    {
-        if(!placeFigure)
-        {
-            placeFigure = true;
-            Serial.println(F("Please place a figure on the Box"));
-            myDFPlayer.playMp3Folder(2);
-            delay(200);
-            while (isPlaying());
-        }
-        else
-        {
-            placeFigure = false;
-            handleStandby();
-        }
-    }
-    // if no Card is present, tell random jokes
-    if (lastJoke + 1000 * randomJokesTime <= millis())
-    {
-        handleJokes();
-        lastJoke = millis();
-    }
 }
 
 // Function declaration
@@ -411,42 +523,77 @@ void loop()
 
 static void handleCard()
 {
-    Serial.println("Entering handleCard");
+    debuging("Entering handleCard");
 
     if (myCard.cookie == 322417479 && myCard.folder != 0)
     {
-        Serial.println("Known-Card detected.");
+        debuging("Known-Card detected.");
 
-        lastFolder = EEPROM.read(lastFolder);
-        numTracksInFolder = myDFPlayer.readFileCountsInFolder(myCard.folder);
+        bool isNewCard = false;
 
-        Serial.println("numTracksInFolder = " + numTracksInFolder);
-
-        if (numTracksInFolder > 0)
+        // if lastFolder != 0 and equals currentCard-Folter just start
+        if (lastFolder != 0 && lastFolder == myCard.folder)
         {
-            if (myCard.folder == lastFolder)
-            {
-                track = lastFolder = EEPROM.read(track);
-                if (track == 0 || track == 255)
-                    track = 1;
-            }
-            else
-            {
-                track = 1;
-            }
-            myDFPlayer.playFolder(myCard.folder, track);
+            debuging("Start playing.");
+            myDFPlayer.start();
+            lastPlay = millis();
+            return;
         }
         else
         {
-            Serial.println("No Song found for folder: " + myCard.folder);
-            myDFPlayer.playMp3Folder(4);
-            myDFPlayer.playFolder(99, myCard.folder);
-            myDFPlayer.playMp3Folder(5);
+            if (lastFolder == 0)
+            {
+                lastFolder = EEPROM.read(LAST_FOLDER_ADRESS);
+            }
+            if(lastFolder == myCard.folder) // same same
+            {
+                if (track == 0)
+                {
+                    track = EEPROM.read(LAST_TRACK_ADRESS);
+                }
+                if (track == 0 || track == 255)
+                {
+                    track = 1;
+                }
+                EEPROM.write(LAST_FOLDER_ADRESS, myCard.folder);
+            }
+            else // neue Karte
+            {
+                //isNewCard = true;
+                lastFolder = myCard.folder;
+                EEPROM.write(LAST_FOLDER_ADRESS, myCard.folder);
+                EEPROM.write(LAST_TRACK_ADRESS, 1);
+                track = 1;
+            }
         }
+        
+        debuging("Starting Track: " + String(track) + ", from Folder: " + String(myCard.folder));
+        myDFPlayer.playFolder(lastFolder, track);
+        handlePlayerEvents();
+        lastPlay = millis();
+        // if(isNewCard)
+        // {
+        //     currentCardIsEmpty = false;
+        //     if (lastTrack == getCurrentFileNumber())
+        //     {
+        //         myDFPlayer.stop();
+        //         currentCardIsEmpty = true;
+        //         playUnKnowCardMessage();
+        //     }
+        // }
+        // else
+        // {
+        //     if (!currentCardIsEmpty)
+        //     {
+        //         myDFPlayer.stop();
+        //     }
+        // }
+        
     }
     else
     {
-        myDFPlayer.playMp3Folder(1);
+        debuging("Figur nicht kompatibel");
+        playSystem3Message(6);
     }
 }
 
@@ -474,6 +621,17 @@ void printDetail(uint8_t type, int value)
         Serial.print(F("Number:"));
         Serial.print(value);
         Serial.println(F(" Play Finished!"));
+        if(skipNextTrack)
+        {
+            tooShortSongCount = 0;
+            skipNextTrack = false;
+        }
+        else if (!isPlaying())
+        {
+            tooShortSongCount = 0;
+            nextTrack(true);
+        }
+        lastTrack = value;
         break;
     case DFPlayerError:
         Serial.print(F("DFPlayerError:"));
@@ -487,15 +645,28 @@ void printDetail(uint8_t type, int value)
             break;
         case SerialWrongStack:
             Serial.println(F("Get Wrong Stack"));
+            if (millis() - lastPlay <= MINIMUM_TRACK_LENGTH)
+            {
+                debuging("No Song found for folder: " + String(myCard.folder));
+                playUnKnowCardMessage();
+                tooShortSongCount = 0;
+            }
+            else
+            {
+                track = 0;
+                nextTrack(true);
+            }
             break;
         case CheckSumNotMatch:
             Serial.println(F("Check Sum Not Match"));
             break;
         case FileIndexOut:
             Serial.println(F("File Index Out of Bound"));
+            track = 1;
             break;
         case FileMismatch:
             Serial.println(F("Cannot Find File"));
+            track = 1;
             break;
         case Advertise:
             Serial.println(F("In Advertise"));
@@ -511,52 +682,50 @@ void printDetail(uint8_t type, int value)
 
 bool readCard(nfcTagObject *nfcTag)
 {
+    debuging("Start reading card");
     bool returnValue = true;
     // Show some details of the PICC (that is: the tag/card)
-    Serial.print(F("Card UID:"));
+    debuging("Card UID:");
     dump_byte_array(mfrc522.uid.uidByte, mfrc522.uid.size);
-    Serial.println();
-    Serial.print(F("PICC type: "));
+    debuging("PICC type: ");
     MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
-    Serial.println(mfrc522.PICC_GetTypeName(piccType));
+    debuging(String(mfrc522.PICC_GetTypeName(piccType)));
 
     byte buffer[18];
     byte size = sizeof(buffer);
 
     // Authenticate using key A
-    Serial.println(F("Authenticating using key A..."));
+    debuging("Authenticating using key A...");
     status = (MFRC522::StatusCode)mfrc522.PCD_Authenticate(
         MFRC522::PICC_CMD_MF_AUTH_KEY_A, trailerBlock, &key, &(mfrc522.uid));
     if (status != MFRC522::STATUS_OK)
     {
         returnValue = false;
-        Serial.print(F("PCD_Authenticate() failed: "));
-        Serial.println(mfrc522.GetStatusCodeName(status));
+        debuging("PCD_Authenticate() failed: ");
+        debuging(String(mfrc522.GetStatusCodeName(status)));
         return returnValue;
     }
 
     // Show the whole sector as it currently is
-    Serial.println(F("Current data in sector:"));
+    debuging("Current data in sector:");
     mfrc522.PICC_DumpMifareClassicSectorToSerial(&(mfrc522.uid), &key, sector);
     Serial.println();
 
     // Read data from the block
-    Serial.print(F("Reading data from block "));
-    Serial.print(blockAddr);
-    Serial.println(F(" ..."));
+    debuging("Reading data from block ");
+    debuging(String(blockAddr));
+    debuging("...");
     status = (MFRC522::StatusCode)mfrc522.MIFARE_Read(blockAddr, buffer, &size);
     if (status != MFRC522::STATUS_OK)
     {
         returnValue = false;
-        Serial.print(F("MIFARE_Read() failed: "));
-        Serial.println(mfrc522.GetStatusCodeName(status));
+        debuging("MIFARE_Read() failed: ");
+        debuging(String(mfrc522.GetStatusCodeName(status)));
     }
-    Serial.print(F("Data in block "));
-    Serial.print(blockAddr);
-    Serial.println(F(":"));
+    debuging("Data in block ");
+    debuging(String(blockAddr));
+    debuging(":");
     dump_byte_array(buffer, 20);
-    Serial.println();
-    Serial.println();
 
     uint32_t tempCookie;
     tempCookie = (uint32_t)buffer[0] << 24;
@@ -577,9 +746,9 @@ bool readCard(nfcTagObject *nfcTag)
     nfcTag->special = buffer[7];
     nfcTag->color = tempColor;
 
-    Serial.println("nfcTag->cookie = " + String(tempCookie));
-    Serial.println("nfcTag->version = " + String(buffer[4]));
-    Serial.println("nfcTag->folder = " + String(buffer[5]));
+    debuging("nfcTag->cookie = " + String(tempCookie));
+    debuging("nfcTag->version = " + String(buffer[4]));
+    debuging("nfcTag->folder = " + String(buffer[5]));
 
     return returnValue;
 }

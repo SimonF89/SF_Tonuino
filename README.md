@@ -21,3 +21,23 @@ Use test_write for writing and testing the RFID-Cards
 
 # Detecting low Battery
 https://www.pangodream.es/esp32-getting-battery-charging-level
+
+
+# offene Todos
+- [ ] prüfen ob aktuelle Karte == letzte Karte
+  - [ ] wenn ja und playing - lasse laufen und mache nichts
+  - [ ] wenn ja und nicht playing - mache weiter bei letzen nächsten Song
+- [ ] numInFolder häufig -1 --> mehrfach ordner auslesen
+- [ ] read and save last Song on EEPROM
+- [ ] save last jokes in string and check if already played. 
+'''
+String playedJokes = "";
+for(int i =0; i < strlen(string); i++ ) {
+  char c = string[i];
+  // do something with c
+}
+
+// Store last song via
+playedJokes += String(track);
+'''
+- [ ] wenn wrong stack und Track==1 --> diese figur hat noch keine Musi!
