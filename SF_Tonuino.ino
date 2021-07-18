@@ -533,15 +533,9 @@ static void handleCard()
         if (lastFolder != 0 && lastFolder == myCard.folder)
         {
             debuging("Start playing.");
-            if (lastSongWasSystemMessage)
-            {
-                myDFPlayer.playFolder(lastFolder, track);
-                lastSongWasSystemMessage = false;
-            }
-            else
-            {
-                myDFPlayer.start();
-            }
+
+            myDFPlayer.start();
+
             lastPlay = millis();
             return;
         }
