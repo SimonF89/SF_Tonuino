@@ -24,11 +24,7 @@ https://www.pangodream.es/esp32-getting-battery-charging-level
 
 
 # offene Todos
-- [ ] nach einem Joke, kan der Song nicht einfach wieder gestartet werden, sondern muss neugestartet werden
-- [ ] HandlePause --> play --> myCard löschen wenn removed! 
-   - [ ] wenn myCard leer --> Stelle Figur auf die Box!
-   - [ ] wenn myCard != leer --> starte letzten Song erneut --> "nextTrack"?
-
+- [ ] adding Code and Layout for detecting low battery
 - [x] prüfen ob aktuelle Karte == letzte Karte
   - [x] wenn ja und playing - lasse laufen und mache nichts
   - [x] wenn ja und nicht playing - mache weiter bei letzen nächsten Song
