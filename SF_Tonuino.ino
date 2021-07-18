@@ -66,6 +66,7 @@ bool isStandby = false;
 bool cardalreadyRead = false;
 bool skipNextTrack = true;
 bool currentCardIsEmpty = false;
+bool lastSongWasSystemMessage = false;
 
 int jokeCount = 16;
 int tooShortSongCount = 0;
@@ -212,6 +213,7 @@ void handleJokes()
     debuging("test");
     debuging("Playing Song: " + String(randomJokeNumber));
     skipNextTrack = true;
+    lastSongWasSystemMessage = true;
     myDFPlayer.playFolder(88, randomJokeNumber);
     delay(1000);
     while (isPlaying())
@@ -363,6 +365,7 @@ int getCurrentFileNumber()
 void playSystem3Message(int trackNr)
 {
     skipNextTrack = true;
+    lastSongWasSystemMessage = true;
     myDFPlayer.playMp3Folder(trackNr);
     delay(1000);
     lastTrack = getCurrentFileNumber();
@@ -535,7 +538,14 @@ static void handleCard()
         if (lastFolder != 0 && lastFolder == myCard.folder)
         {
             debuging("Start playing.");
-            myDFPlayer.start();
+            if (!lastSongWasSystemMessage)
+            {
+                myDFPlayer.playFolder(lastFolder, track);
+            }
+            else
+            {
+                myDFPlayer.start();
+            }
             lastPlay = millis();
             return;
         }
@@ -543,22 +553,28 @@ static void handleCard()
         {
             if (lastFolder == 0)
             {
+                debuging("No lastFolder, reading from EEPROM");
                 lastFolder = EEPROM.read(LAST_FOLDER_ADRESS);
             }
             if(lastFolder == myCard.folder) // same same
             {
+                debuging("lastForder == myCard.folder");
                 if (track == 0)
                 {
+                    debuging("no lastTrack, reading from EEPROM");
                     track = EEPROM.read(LAST_TRACK_ADRESS);
                 }
                 if (track == 0 || track == 255)
                 {
+                    debuging("no Track stored in EEPROM, set Track=1");
                     track = 1;
                 }
+                debuging("Save current Folder to EEPROM: " + String(myCard.folder));
                 EEPROM.write(LAST_FOLDER_ADRESS, myCard.folder);
             }
             else // neue Karte
             {
+                debuging("detected new Card. Save new Folder and Track=1 to EEPROM");
                 //isNewCard = true;
                 lastFolder = myCard.folder;
                 EEPROM.write(LAST_FOLDER_ADRESS, myCard.folder);
@@ -645,11 +661,20 @@ void printDetail(uint8_t type, int value)
             break;
         case SerialWrongStack:
             Serial.println(F("Get Wrong Stack"));
-            if (millis() - lastPlay <= MINIMUM_TRACK_LENGTH)
+            long tmp2;
+            tmp2 = millis() - lastPlay;
+            if (tmp2 <= MINIMUM_TRACK_LENGTH)
             {
-                debuging("No Song found for folder: " + String(myCard.folder));
-                playUnKnowCardMessage();
-                tooShortSongCount = 0;
+                tooShortSongCount ++;
+                if (tooShortSongCount >= maxTooShortSongs)
+                {
+                    playUnKnowCardMessage();
+                    tooShortSongCount = 0;
+                }
+                else
+                {
+                    debuging("millis() - lastPlay <= MINIMUM_TRACK_LENGTH" + String(tmp2));
+                }
             }
             else
             {
