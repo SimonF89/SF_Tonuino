@@ -36,7 +36,7 @@ byte blockAddr = 4;
 byte trailerBlock = 7;
 MFRC522::StatusCode status;
 
-int numTracksInFolder;
+int numTracksInFolder = 10;
 uint16_t track = 1;
 byte lastFolder = 0;
 int lastTrack = 0;
@@ -142,35 +142,30 @@ void nextTrack(bool forward)
 {
     if (forward)
     {
-        if (track != numTracksInFolder)
+        track = track + 1;
+        if (track > numTracksInFolder)
         {
-            track = track + 1;
-            debuging("Playing Track" + String(track) + ", from Folter: " + String(myCard.folder));
-            if(myCard.folder)
-            {
-                myDFPlayer.playFolder(myCard.folder, track);
-            }
-            else 
-            {
-                myDFPlayer.playMp3Folder(track);
-            }
-            lastPlay = millis();
-            // Fortschritt im EEPROM abspeichern
-            EEPROM.write(LAST_TRACK_ADRESS, track);
+            track = 1;
         }
-        else
+        debuging("Playing Track" + String(track) + ", from Folder: " + String(myCard.folder));
+        if(myCard.folder)
         {
-            debuging("Kein Song mehr übrig. Player in Standby versetzen.");
-            myDFPlayer.pause();
-            // Fortschritt zurück setzen
-            EEPROM.write(LAST_TRACK_ADRESS, 1);
+            myDFPlayer.playFolder(myCard.folder, track);
         }
+        else 
+        {
+            myDFPlayer.playMp3Folder(track);
+        }
+        lastPlay = millis();
+        // Fortschritt im EEPROM abspeichern
+        EEPROM.write(LAST_TRACK_ADRESS, track);
     }
     else
     {
-        if (track > 1)
+        track = track - 1;
+        if (track < 1)
         {
-            track = track - 1;
+            track = 1;
         }
         debuging("Playing Track" + String(track));
         myDFPlayer.playFolder(myCard.folder, track);
@@ -209,9 +204,9 @@ void handleVolume(bool louder)
 void handleJokes()
 {
     debuging("Start Random Joke");
-    randomJokeNumber = random(jokeCount);
+    randomJokeNumber = random(jokeCount - 1) + 1;
     debuging("test");
-    debuging("Playing Song: " + String(randomJokeNumber));
+    debuging("Playing Joke: " + String(randomJokeNumber));
     skipNextTrack = true;
     lastSongWasSystemMessage = true;
     myDFPlayer.playFolder(88, randomJokeNumber);
@@ -538,9 +533,10 @@ static void handleCard()
         if (lastFolder != 0 && lastFolder == myCard.folder)
         {
             debuging("Start playing.");
-            if (!lastSongWasSystemMessage)
+            if (lastSongWasSystemMessage)
             {
                 myDFPlayer.playFolder(lastFolder, track);
+                lastSongWasSystemMessage = false;
             }
             else
             {
